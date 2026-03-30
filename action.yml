@@ -47,14 +47,20 @@ runs:
       if: ${{ inputs.apt_update == 'true' }}
       shell: bash
       run: |
+        echo "::group::  Update package lists"
+      
         echo "Running apt-get update..."
         sudo apt-get update
         echo "Package lists updated successfully."
+
+        echo "::endgroup::"
 
     - name: Install packages
       if: ${{ inputs.cache == 'false' }}
       shell: bash
       run: |
+        echo "::group::  Install packages"
+
         echo "Installing packages: ${{ inputs.packages }}"
         if [[ "${{ inputs.recommends }}" == "false" ]]; then
           NORECOMMENDS="--no-install-recommends"
@@ -63,6 +69,8 @@ runs:
         fi
         sudo apt-get install -y $NORECOMMENDS ${{ inputs.packages }}
         echo "Packages installed successfully."
+
+        echo "::endgroup::"
 
     - name: Install packages with cache
       if: ${{ inputs.cache == 'true' }}
