@@ -36,23 +36,32 @@ runs:
   steps:
     # No cache implementation in this action, but input is present for compatibility
 
-    - name: Disable mandb updates
+    - name: Disable mandb updates (if available)
       if: ${{ inputs.mandb == 'false' }}
       shell: bash
       run: |
-        echo "⚙️  Disabling man-db trigger..."
-        sudo ln -sf /bin/true /usr/bin/mandb
+        echo "⚙️  Handling man-db trigger setting..."
+        if command -v mandb >/dev/null 2>&1; then
+          MANDB_PATH="$(command -v mandb)"
+          echo "mandb found at ${MANDB_PATH}; stubbing to /bin/true"
+          sudo ln -sf /bin/true "${MANDB_PATH}"
+        else
+          echo "mandb not present on runner; nothing to disable"
+        fi
 
     - name: Update package lists
       if: ${{ inputs.apt_update == 'true' }}
       shell: bash
       run: |
         echo "::group::  Update package lists"
-      
+        START_TS=$(date +%s)
+
         echo "Running apt-get update..."
         sudo apt-get update
         echo "Package lists updated successfully."
 
+        END_TS=$(date +%s)
+        echo "apt-get update duration: $((END_TS - START_TS))s"
         echo "::endgroup::"
 
     - name: Install packages
@@ -60,6 +69,7 @@ runs:
       shell: bash
       run: |
         echo "::group::  Install packages"
+        START_TS=$(date +%s)
 
         echo "Installing packages: ${{ inputs.packages }}"
         if [[ "${{ inputs.recommends }}" == "false" ]]; then
@@ -70,6 +80,8 @@ runs:
         sudo apt-get install -y $NORECOMMENDS ${{ inputs.packages }}
         echo "Packages installed successfully."
 
+        END_TS=$(date +%s)
+        echo "apt-get install duration: $((END_TS - START_TS))s"
         echo "::endgroup::"
 
     - name: Install packages with cache

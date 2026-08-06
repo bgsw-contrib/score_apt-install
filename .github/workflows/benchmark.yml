@@ -1,6 +1,6 @@
 # *******************************************************************************
 # Copyright (c) 2026 Contributors to the Eclipse Foundation
-#
+# and
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
 #
@@ -16,6 +16,7 @@ name: Benchmark
 on:
   schedule:
     - cron: "*/5 * * * *"
+  workflow_dispatch:
 
 jobs:
   benchmark-plain-apt:
@@ -27,8 +28,10 @@ jobs:
         id: timer_start
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Install graphviz via apt
-        run: sudo apt-get install -y graphviz
+      - name: Install graphviz via plain apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends graphviz
 
       - name: Compute duration
         id: timing
@@ -37,7 +40,7 @@ jobs:
           duration=$((end - ${{ steps.timer_start.outputs.time }}))
           echo "duration=$duration" >> "$GITHUB_OUTPUT"
 
-  benchmark-action:
+  benchmark-action-no-cache:
     runs-on: ubuntu-latest
     outputs:
       duration: ${{ steps.timing.outputs.duration }}
@@ -49,10 +52,40 @@ jobs:
         id: timer_start
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Install graphviz via action
+      - name: Install graphviz via action (cache=false)
         uses: ./
         with:
           packages: graphviz
+          cache: false
+          apt_update: true
+          recommends: false
+          mandb: false
+
+      - name: Compute duration
+        id: timing
+        run: |
+          end=$(date +%s)
+          duration=$((end - ${{ steps.timer_start.outputs.time }}))
+          echo "duration=$duration" >> "$GITHUB_OUTPUT"
+
+  benchmark-action-cache:
+    runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.timing.outputs.duration }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Record start time
+        id: timer_start
+        run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Install graphviz via action (cache=true)
+        uses: ./
+        with:
+          packages: graphviz
+          cache: true
+          mandb: false
 
       - name: Compute duration
         id: timing
@@ -62,7 +95,7 @@ jobs:
           echo "duration=$duration" >> "$GITHUB_OUTPUT"
 
   summary:
-    needs: [benchmark-plain-apt, benchmark-action]
+    needs: [benchmark-plain-apt, benchmark-action-no-cache, benchmark-action-cache]
     runs-on: ubuntu-latest
     steps:
       - name: Restore historical data
@@ -75,7 +108,7 @@ jobs:
       - name: Append current results
         run: |
           touch benchmark-results.csv
-          echo "${{ needs.benchmark-plain-apt.outputs.duration }},${{ needs.benchmark-action.outputs.duration }}" >> benchmark-results.csv
+          echo "${{ needs.benchmark-plain-apt.outputs.duration }},${{ needs.benchmark-action-no-cache.outputs.duration }},${{ needs.benchmark-action-cache.outputs.duration }}" >> benchmark-results.csv
 
       - name: Compute statistics and write summary
         run: |
@@ -112,8 +145,9 @@ jobs:
             echo ""
             echo "| Method | Mean (s) | Median (s) | 30–60s | >60s |"
             echo "|--------|----------|------------|--------|------|"
-            stats_for 1 "\`apt install graphviz\`"
-            stats_for 2 "via this action"
+            stats_for 1 "\`plain apt (update + install)\`"
+            stats_for 2 "\`action (cache=false)\`"
+            stats_for 3 "\`action (cache=true)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save updated data
