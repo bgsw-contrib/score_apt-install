@@ -16,6 +16,7 @@ name: Benchmark
 on:
   schedule:
     - cron: "*/5 * * * *"
+  workflow_dispatch:
 
 jobs:
   benchmark-plain-apt:
@@ -27,8 +28,18 @@ jobs:
         id: timer_start
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Install graphviz via apt
-        run: sudo apt-get install -y graphviz
+      - name: Disable mandb updates (baseline parity)
+        run: |
+          if command -v mandb >/dev/null 2>&1; then
+            sudo ln -sf /bin/true "$(command -v mandb)"
+          else
+            echo "mandb not present on runner; baseline already equivalent"
+          fi
+
+      - name: Install graphviz via plain apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends graphviz
 
       - name: Compute duration
         id: timing
@@ -37,7 +48,7 @@ jobs:
           duration=$((end - ${{ steps.timer_start.outputs.time }}))
           echo "duration=$duration" >> "$GITHUB_OUTPUT"
 
-  benchmark-action:
+  benchmark-action-no-cache:
     runs-on: ubuntu-latest
     outputs:
       duration: ${{ steps.timing.outputs.duration }}
@@ -49,10 +60,42 @@ jobs:
         id: timer_start
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Install graphviz via action
+      - name: Install graphviz via action (cache=false)
         uses: ./
         with:
           packages: graphviz
+          cache: false
+          apt_update: true
+          recommends: false
+          mandb: false
+
+      - name: Compute duration
+        id: timing
+        run: |
+          end=$(date +%s)
+          duration=$((end - ${{ steps.timer_start.outputs.time }}))
+          echo "duration=$duration" >> "$GITHUB_OUTPUT"
+
+  benchmark-action-cache:
+    runs-on: ubuntu-latest
+    outputs:
+      duration: ${{ steps.timing.outputs.duration }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Record start time
+        id: timer_start
+        run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Install graphviz via action (cache=true)
+        uses: ./
+        with:
+          packages: graphviz
+          cache: true
+          apt_update: true
+          recommends: false
+          mandb: false
 
       - name: Compute duration
         id: timing
@@ -62,7 +105,7 @@ jobs:
           echo "duration=$duration" >> "$GITHUB_OUTPUT"
 
   summary:
-    needs: [benchmark-plain-apt, benchmark-action]
+    needs: [benchmark-plain-apt, benchmark-action-no-cache, benchmark-action-cache]
     runs-on: ubuntu-latest
     steps:
       - name: Restore historical data
@@ -75,17 +118,29 @@ jobs:
       - name: Append current results
         run: |
           touch benchmark-results.csv
-          echo "${{ needs.benchmark-plain-apt.outputs.duration }},${{ needs.benchmark-action.outputs.duration }}" >> benchmark-results.csv
+
+
+          if [ -s benchmark-results.csv ] && awk -F',' 'NF!=3 {found=1} END{exit(found?0:1)}' benchmark-results.csv; then
+            mv benchmark-results.csv benchmark-results.legacy.csv
+            touch benchmark-results.csv
+          fi
+
+          echo "${{ needs.benchmark-plain-apt.outputs.duration }},${{ needs.benchmark-action-no-cache.outputs.duration }},${{ needs.benchmark-action-cache.outputs.duration }}" >> benchmark-results.csv
 
       - name: Compute statistics and write summary
         run: |
           stats_for() {
             local col="$1"
             local label="$2"
-            cut -d',' -f"${col}" benchmark-results.csv | sort -n > /tmp/dur.txt
+            cut -d',' -f"${col}" benchmark-results.csv | grep -E '^[0-9]+$' | sort -n > /tmp/dur.txt
             awk -v label="$label" '
               { d[NR] = $1; total += $1 }
               END {
+                if (NR == 0) {
+                  printf "| %s | - | - | - | - |\n", label
+                  exit
+                }
+
                 mean = total / NR
                 median = d[int((NR + 1) / 2)]
                 for (i = 1; i <= NR; i++) {
@@ -112,8 +167,9 @@ jobs:
             echo ""
             echo "| Method | Mean (s) | Median (s) | 30–60s | >60s |"
             echo "|--------|----------|------------|--------|------|"
-            stats_for 1 "\`apt install graphviz\`"
-            stats_for 2 "via this action"
+            stats_for 1 "\`plain apt (update + install)\`"
+            stats_for 2 "\`action (cache=false)\`"
+            stats_for 3 "\`action (cache=true)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save updated data
