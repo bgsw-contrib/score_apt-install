@@ -1,6 +1,6 @@
 # *******************************************************************************
 # Copyright (c) 2026 Contributors to the Eclipse Foundation
-# and
+#
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
 #
@@ -85,6 +85,8 @@ jobs:
         with:
           packages: graphviz
           cache: true
+          apt_update: true
+          recommends: false
           mandb: false
 
       - name: Compute duration
@@ -108,6 +110,13 @@ jobs:
       - name: Append current results
         run: |
           touch benchmark-results.csv
+
+
+          if [ -s benchmark-results.csv ] && awk -F',' 'NF!=3 {found=1} END{exit(found?0:1)}' benchmark-results.csv; then
+            mv benchmark-results.csv benchmark-results.legacy.csv
+            touch benchmark-results.csv
+          fi
+
           echo "${{ needs.benchmark-plain-apt.outputs.duration }},${{ needs.benchmark-action-no-cache.outputs.duration }},${{ needs.benchmark-action-cache.outputs.duration }}" >> benchmark-results.csv
 
       - name: Compute statistics and write summary
@@ -115,10 +124,15 @@ jobs:
           stats_for() {
             local col="$1"
             local label="$2"
-            cut -d',' -f"${col}" benchmark-results.csv | sort -n > /tmp/dur.txt
+            cut -d',' -f"${col}" benchmark-results.csv | grep -E '^[0-9]+$' | sort -n > /tmp/dur.txt
             awk -v label="$label" '
               { d[NR] = $1; total += $1 }
               END {
+                if (NR == 0) {
+                  printf "| %s | - | - | - | - |\n", label
+                  exit
+                }
+
                 mean = total / NR
                 median = d[int((NR + 1) / 2)]
                 for (i = 1; i <= NR; i++) {
