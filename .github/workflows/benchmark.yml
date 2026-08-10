@@ -28,6 +28,14 @@ jobs:
         id: timer_start
         run: echo "time=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - name: Disable mandb updates (baseline parity)
+        run: |
+          if command -v mandb >/dev/null 2>&1; then
+            sudo ln -sf /bin/true "$(command -v mandb)"
+          else
+            echo "mandb not present on runner; baseline already equivalent"
+          fi
+
       - name: Install graphviz via plain apt
         run: |
           sudo apt-get update
